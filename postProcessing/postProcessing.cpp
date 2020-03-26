@@ -39,10 +39,10 @@ void update_data(rs2::frame_queue& data,rs2::frame& frame,rs2::points& points,rs
 int main(int argc,char** argv) try 
 {
 	window app(1280,720,"Realsense post processing example");
-	Imgui_ImplGlfw_Init(app,false);
+	ImGui_ImplGlfw_Init(app,false);
 
-	glfw_state original_view_orientation();
-	glfw_state filtered_view_orientation();
+	glfw_state original_view_orientation;
+	glfw_state filtered_view_orientation;
 
 	rs2::pointcloud originalPc;
 	rs2::pointcloud filteredPc;
@@ -66,7 +66,7 @@ int main(int argc,char** argv) try
 	std::vector<filter_options> filters;
 
 	filters.emplace_back("Decimate",dFilter);
-	filters.emplace_back("Threshold,tFilter");
+	filters.emplace_back("Threshold",tFilter);
 	filters.emplace_back(disparity_filter_name,depth_to_disparity);
 	filters.emplace_back("Spatial",sFilter);
 	filters.emplace_back("Temporal",tempFilter);
@@ -96,7 +96,7 @@ int main(int argc,char** argv) try
 					if(filter.is_enabled)
 					{
 						filtered = filter.filter.process(filtered);
-						if(filter.filter_name = disparity_filter_name)
+						if(filter.filter_name == disparity_filter_name)
 						{
 							revert_disparity = true;
 						}
@@ -130,8 +130,8 @@ int main(int argc,char** argv) try
 
 		render_ui(w,h,filters);
 
-		update_data(original_data,colored_depth,original_points,original_pc,original_view_orientation,color_map);
-		update_data(filtered_data,colored_filtered,filtered_points,filtered_view_orientation,color_map);
+		update_data(original_data,colored_depth,original_points,originalPc,original_view_orientation,color_map);
+		update_data(filtered_data,colored_filtered,filtered_points,filteredPc,filtered_view_orientation,color_map);
 	
 		draw_text(10,50,"Original");
 		draw_text(static_cast<int>(w/2),50,"Filtered");
@@ -195,7 +195,144 @@ void update_data(rs2::frame_queue& data,rs2::frame& colorized_depth,rs2::points&
 	}
 }
 
-void render_ui(float w, float h,std::vector<filter_options>& filter)
+void render_ui(float w, float h,std::vector<filter_options>& filters)
 {
+	static const int flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar
+													|ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove
+													|ImGuiWindowFlags_NoTitleBar |ImGuiWindowFlags_NoSavedSettings;
+
+	ImGui_ImplGlfw_NewFrame(1);
+	ImGui::SetNextWindowSize({w,h});
+	ImGui::Begin("app",nullptr,flags);
+
+	const float offset_x = w/4;
+	const int offset_from_checkbox = 120;
+	float offset_y = h/2;
+	float elements_margin = 45;
+
+	for(auto& filter: filters)
+	{
+		ImGui::SetCursorPos({offset_x,offset_y});
+		ImGui::PushStyleColor(ImGuiCol_CheckMark,{40/255.0f,170/255.0f,90/255.0f,1});
 	
+
+	bool tmp_value = filter.is_enabled;
+	ImGui::Checkbox(filter.filter_name.c_str(),&tmp_value);
+	filter.is_enabled = tmp_value;
+	ImGui::PopStyleColor();
+
+	if(filter.supported_options.size()==0)
+	{
+		offset_y += elements_margin;
+	}
+
+	for(auto& option_slider_pair : filter.supported_options)
+	{
+		filter_slider_ui& slider = option_slider_pair.second;
+		if(slider.render({offset_x+offset_from_checkbox,offset_y,w/4},filter.is_enabled))
+		{
+			filter.filter.set_option(option_slider_pair.first,slider.value);
+		}
+		offset_y += elements_margin;
+	}
+
 }
+ImGui::End();
+ImGui::Render();
+}
+
+bool filter_slider_ui::render(const float3& location,bool enabled)
+{
+	bool value_changed = false;
+	ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding,12);
+	ImGui::PushStyleColor(ImGuiCol_SliderGrab,{40/255.0f,170/255.0f,90/255.0f,1});
+	ImGui::PushStyleColor(ImGuiCol_SliderGrabActive,{40/255.0f,170/255.0f,70/255.0f,1});
+	ImGui::GetStyle().GrabRounding=12;
+
+	if(!enabled)
+	{
+		ImGui::PushStyleColor(ImGuiCol_SliderGrab,{0,0,0,0});
+		ImGui::PushStyleColor(ImGuiCol_SliderGrabActive,{0,0,0,0});
+		ImGui::PushStyleColor(ImGuiCol_Text, {0.6f,0.6f,0.6f,1});
+	}
+
+	ImGui::PushItemWidth(location.z);
+	ImGui::SetCursorPos({location.x,location.y+3});
+	ImGui::TextUnformatted(label.c_str());
+	if(ImGui::IsItemHovered())
+		ImGui::SetTooltip("%s",description.c_str());
+
+	ImGui::SetCursorPos({location.x+170,location.y});
+
+	if(is_int)
+	{
+		int value_as_int = static_cast<int>(value);
+		value_changed = ImGui::SliderInt(("##"+name).c_str(),&value_as_int,static_cast<int>(range.min),static_cast<int>(range.max),"%.0f");
+		value = static_cast<float>(value_as_int);
+	}
+	else
+	{
+		value_changed = ImGui::SliderFloat(("##"+name).c_str(),&value,range.min,range.max,"%.3f",1.0f);
+	}
+
+	ImGui::PopItemWidth();
+	if(!enabled)
+	{
+		ImGui::PopStyleColor(3);
+	}
+
+	ImGui::PopStyleVar();
+	ImGui::PopStyleColor(2);
+	return value_changed;
+}
+
+bool filter_slider_ui::is_all_integers(const rs2::option_range& range)
+{
+    const auto is_integer = [](float f)
+    {
+        return (fabs(fmod(f, 1)) < std::numeric_limits<float>::min());
+    };
+
+    return is_integer(range.min) && is_integer(range.max) &&
+        is_integer(range.def) && is_integer(range.step);
+}
+
+/**
+Constructor for filter_options, takes a name and a filter.
+*/
+filter_options::filter_options(const std::string& name, rs2::filter& flt) :
+    filter_name(name),
+    filter(flt),
+    is_enabled(true)
+{
+    const std::array<rs2_option, 5> possible_filter_options = {
+        RS2_OPTION_FILTER_MAGNITUDE,
+        RS2_OPTION_FILTER_SMOOTH_ALPHA,
+        RS2_OPTION_MIN_DISTANCE,
+        RS2_OPTION_MAX_DISTANCE,
+        RS2_OPTION_FILTER_SMOOTH_DELTA
+    };
+
+    //Go over each filter option and create a slider for it
+    for (rs2_option opt : possible_filter_options)
+    {
+        if (flt.supports(opt))
+        {
+            rs2::option_range range = flt.get_option_range(opt);
+            supported_options[opt].range = range;
+            supported_options[opt].value = range.def;
+            supported_options[opt].is_int = filter_slider_ui::is_all_integers(range);
+            supported_options[opt].description = flt.get_option_description(opt);
+            std::string opt_name = flt.get_option_name(opt);
+            supported_options[opt].name = name + "_" + opt_name;
+            std::string prefix = "Filter ";
+            supported_options[opt].label = opt_name;
+        }
+    }
+}
+
+filter_options::filter_options(filter_options&& other) :
+    filter_name(std::move(other.filter_name)),
+    filter(other.filter),
+    supported_options(std::move(other.supported_options)),
+    is_enabled(other.is_enabled.load()){}
