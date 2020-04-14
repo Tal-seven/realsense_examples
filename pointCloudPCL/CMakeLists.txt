@@ -1,0 +1,12 @@
+cmake_minimum_required(VERSION 3.2 FATAL_ERROR)
+
+project(pointCloudPCL)
+find_package(OpenGL REQUIRED)
+find_package(PCL 1.8 REQUIRED)
+link_directories(${PCL_LIBRARY_DIRS})
+FILE(GLOB Sources ${CMAKE_SOURCE_DIR}/imgui/*.cpp)
+add_executable(pcPCL pointCloudPCL.cpp /home/talha/librealsense/examples/example.hpp ${Sources})
+set_property(TARGET pcPCL PROPERTY CXX_STANDARD 11)
+target_link_libraries(pcPCL PRIVATE realsense2 glfw ${OPENGL_LIBRARIES} ${PCL_LIBRARIES})
+target_include_directories(pcPCL PRIVATE ${PCL_INCLUDE_DIRS} ${CMAKE_SOURCE_DIR}/imgui/)
+target_compile_definitions(pcPCL PRIVATE ${PCL_DEFINITIONS})
